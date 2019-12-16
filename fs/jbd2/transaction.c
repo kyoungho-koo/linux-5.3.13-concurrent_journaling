@@ -906,7 +906,9 @@ repeat:
 			J_ASSERT_JH(jh,
 				jh->b_transaction == transaction ||
 				jh->b_transaction ==
-					journal->j_committing_transaction);
+					journal->j_committing_transaction ||
+				jh->b_transaction ==
+				    journal->j_rtc_transaction);
 			if (jh->b_next_transaction)
 				J_ASSERT_JH(jh, jh->b_next_transaction ==
 							transaction);
@@ -935,8 +937,9 @@ repeat:
 	 * The buffer is already part of this transaction if b_transaction or
 	 * b_next_transaction points to it
 	 */
-	if (jh->b_transaction == transaction ||
-	    jh->b_next_transaction == transaction)
+	if (jh->b_transaction == journal->j_running_transaction ||
+	    (journal->j_rtc_transaction && jh->b_transaction == journal->j_rtc_transaction) ||
+	    jh->b_next_transaction == journal->j_running_transaction)
 		goto done;
 
 	/*
@@ -977,7 +980,8 @@ repeat:
 
 	JBUFFER_TRACE(jh, "owned by older transaction");
 	J_ASSERT_JH(jh, jh->b_next_transaction == NULL);
-	J_ASSERT_JH(jh, jh->b_transaction == journal->j_committing_transaction);
+	J_ASSERT_JH(jh, jh->b_transaction == journal->j_committing_transaction ||
+	                jh->b_transaction == journal->j_rtc_transaction);
 
 	/*
 	 * There is one case we have to be very careful about.  If the
@@ -1027,7 +1031,7 @@ attach_next:
 	 * in jbd2_write_access_granted()
 	 */
 	smp_wmb();
-	jh->b_next_transaction = transaction;
+	jh->b_next_transaction = journal->j_running_transaction;
 
 done:
 	jbd_unlock_bh_state(bh);
@@ -1368,8 +1372,13 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 
 	if (is_handle_aborted(handle))
 		return -EROFS;
-	if (!buffer_jbd(bh))
-		return -EUCLEAN;
+	if (!buffer_jbd(bh)) {
+		printk("jbd2_journal_dirty_metadata : error -EUCLEAN");
+		return 0;
+		//return -EUCLEAN;
+	}
+
+	journal = transaction->t_journal;
 
 	/*
 	 * We don't grab jh reference here since the buffer must be part
@@ -1384,7 +1393,6 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 	 * in inconsistent state unless we grab bh_state lock. But this is
 	 * crucial to catch bugs so let's do a reliable check until the
 	 * lockless handling is fully proven.
-	 */
 	if (jh->b_transaction != transaction &&
 	    jh->b_next_transaction != transaction) {
 		jbd_lock_bh_state(bh);
@@ -1392,26 +1400,34 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 				jh->b_next_transaction == transaction);
 		jbd_unlock_bh_state(bh);
 	}
+	 */
+
+	if(jh->b_transaction == journal->j_committing_transaction && !jh->b_next_transaction) {
+	    printk("jh->b_transaction == journal->j_committing_transaction\n");
+	}
 	if (jh->b_modified == 1) {
 		/* If it's in our transaction it must be in BJ_Metadata list. */
-		if (jh->b_transaction == transaction &&
+		if (jh->b_transaction == journal->j_running_transaction &&
 		    jh->b_jlist != BJ_Metadata) {
 			jbd_lock_bh_state(bh);
-			if (jh->b_transaction == transaction &&
+			if (jh->b_transaction == journal->j_running_transaction &&
 			    jh->b_jlist != BJ_Metadata)
 				pr_err("JBD2: assertion failure: h_type=%u "
 				       "h_line_no=%u block_no=%llu jlist=%u\n",
 				       handle->h_type, handle->h_line_no,
 				       (unsigned long long) bh->b_blocknr,
 				       jh->b_jlist);
+			/*
 			J_ASSERT_JH(jh, jh->b_transaction != transaction ||
 					jh->b_jlist == BJ_Metadata);
+					*/
 			jbd_unlock_bh_state(bh);
 		}
 		goto out;
 	}
 
-	journal = transaction->t_journal;
+	//	for Ready-To-Commit transaction
+//	journal = transaction->t_journal;
 	jbd_lock_bh_state(bh);
 
 	if (jh->b_modified == 0) {
@@ -1464,9 +1480,11 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 	 */
 	if (jh->b_transaction != transaction) {
 		JBUFFER_TRACE(jh, "already on other transaction");
-		if (unlikely(((jh->b_transaction !=
-			       journal->j_committing_transaction)) ||
-			     (jh->b_next_transaction != transaction))) {
+		if (unlikely((jh->b_transaction !=
+			       journal->j_committing_transaction) && 
+			          (jh->b_transaction !=
+				   journal->j_rtc_transaction))) {
+//		  ||	     (jh->b_next_transaction != transaction))) {
 			printk(KERN_ERR "jbd2_journal_dirty_metadata: %s: "
 			       "bad jh for block %llu: "
 			       "transaction (%p, %u), "
@@ -1491,11 +1509,11 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 	}
 
 	/* That test should have eliminated the following case: */
-	J_ASSERT_JH(jh, jh->b_frozen_data == NULL);
+//	J_ASSERT_JH(jh, jh->b_frozen_data == NULL);
 
 	JBUFFER_TRACE(jh, "file as BJ_Metadata");
 	spin_lock(&journal->j_list_lock);
-	__jbd2_journal_file_buffer(jh, transaction, BJ_Metadata);
+	__jbd2_journal_file_buffer(jh, (jh->b_transaction) ? jh->b_transaction : transaction, BJ_Metadata);
 	spin_unlock(&journal->j_list_lock);
 out_unlock_bh:
 	jbd_unlock_bh_state(bh);
@@ -1603,7 +1621,9 @@ int jbd2_journal_forget (handle_t *handle, struct buffer_head *bh)
 		spin_unlock(&journal->j_list_lock);
 	} else if (jh->b_transaction) {
 		J_ASSERT_JH(jh, (jh->b_transaction ==
-				 journal->j_committing_transaction));
+				 journal->j_committing_transaction) ||
+		                (jh->b_transaction == 
+				 journal->j_rtc_transaction));
 		/* However, if the buffer is still owned by a prior
 		 * (committing) transaction, we can't drop it yet... */
 		JBUFFER_TRACE(jh, "belongs to older transaction");
@@ -2605,7 +2625,9 @@ static int jbd2_journal_file_inode(handle_t *handle, struct jbd2_inode *jinode,
 	if (jinode->i_transaction) {
 		J_ASSERT(jinode->i_next_transaction == NULL);
 		J_ASSERT(jinode->i_transaction ==
-					journal->j_committing_transaction);
+					journal->j_committing_transaction ||
+				 jinode->i_transaction == 
+				    journal->j_rtc_transaction );
 		jinode->i_next_transaction = transaction;
 		goto done;
 	}

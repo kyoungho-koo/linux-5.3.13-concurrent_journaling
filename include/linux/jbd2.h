@@ -1603,6 +1603,14 @@ static inline unsigned long jbd2_log_space_left(journal_t *journal)
 		/* Transaction + control blocks */
 		free -= committing + (committing >> JBD2_CONTROL_BLOCKS_SHIFT);
 	}
+	if (journal->j_rtc_transaction) {
+		unsigned long readyToCommit = atomic_read(&journal->
+			j_rtc_transaction->t_outstanding_credits);
+
+		/* Transaction + control blocks */
+		free -= readyToCommit + (readyToCommit >> JBD2_CONTROL_BLOCKS_SHIFT);
+  
+	}
 	return free;
 }
 

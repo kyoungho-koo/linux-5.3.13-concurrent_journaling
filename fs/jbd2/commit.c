@@ -346,6 +346,23 @@ static void jbd2_block_tag_csum_set(journal_t *j, journal_block_tag_t *tag,
 	else
 		tag->t_checksum = cpu_to_be16(csum32);
 }
+
+/*
+ *  [journal-j_state_lock]
+ */
+void static inline RTC_insert(journal_t* journal) {
+  journal->j_rtc_transaction = journal->j_running_transaction;
+  journal->j_rtc_transaction->t_state = T_RTC;
+  journal->j_running_transaction = NULL;
+}
+
+/*
+ *  [journal-j_state_lock]
+ */
+void static inline RTC_fetch(journal_t* journal) {
+  journal->j_rtc_transaction->t_state = T_FLUSH;
+  journal->j_committing_transaction = journal->j_rtc_transaction;
+}
 /*
  * jbd2_journal_commit_transaction
  *
@@ -421,7 +438,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 
 	write_lock(&journal->j_state_lock);
 	J_ASSERT(commit_transaction->t_state == T_RUNNING);
-	commit_transaction->t_state = T_RTC;
+	RTC_insert(journal); // <- commit_transaction->t_state = T_RTC;
 
 	trace_jbd2_commit_locking(journal, commit_transaction);
 	stats.run.rs_wait = commit_transaction->t_max_wait;
@@ -524,9 +541,13 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	stats.run.rs_locked = jbd2_time_diff(stats.run.rs_locked,
 					     stats.run.rs_flushing);
 
-	commit_transaction->t_state = T_FLUSH;
-	journal->j_committing_transaction = commit_transaction;
-	journal->j_running_transaction = NULL;
+/*
+*	commit_transaction->t_state = T_FLUSH; (O)
+*	journal->j_committing_transaction = commit_transaction; (O)
+*	journal->j_running_transaction = NULL; (X) <- removed statement
+*/
+    RTC_fetch(journal);
+
 	start_time = ktime_get();
 	commit_transaction->t_log_start = journal->j_head;
 	wake_up(&journal->j_wait_transaction_locked);
