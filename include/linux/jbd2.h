@@ -587,7 +587,8 @@ struct transaction_s
 	 */
 	enum {
 		T_RUNNING,
-		T_LOCKED,
+//		T_LOCKED,
+		T_RTC,
 		T_SWITCH,
 		T_FLUSH,
 		T_COMMIT,
@@ -812,6 +813,15 @@ struct journal_s
 	 * [j_state_lock] [caller holding open handle]
 	 */
 	transaction_t		*j_running_transaction;
+
+	/**
+	 * @j_rtc_transaction:
+	 *
+	 * Transaction: Ready To Commit transaction
+	 * [j_state_lock] 
+	 */
+	transaction_t		*j_rtc_transaction;
+
 
 	/**
 	 * @j_committing_transaction:
