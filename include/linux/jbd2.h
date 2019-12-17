@@ -587,7 +587,8 @@ struct transaction_s
 	 */
 	enum {
 		T_RUNNING,
-		T_LOCKED,
+//		T_LOCKED,
+		T_RTC,
 		T_SWITCH,
 		T_FLUSH,
 		T_COMMIT,
@@ -812,6 +813,15 @@ struct journal_s
 	 * [j_state_lock] [caller holding open handle]
 	 */
 	transaction_t		*j_running_transaction;
+
+	/**
+	 * @j_rtc_transaction:
+	 *
+	 * Transaction: Ready To Commit transaction
+	 * [j_state_lock] 
+	 */
+	transaction_t		*j_rtc_transaction;
+
 
 	/**
 	 * @j_committing_transaction:
@@ -1592,6 +1602,14 @@ static inline unsigned long jbd2_log_space_left(journal_t *journal)
 
 		/* Transaction + control blocks */
 		free -= committing + (committing >> JBD2_CONTROL_BLOCKS_SHIFT);
+	}
+	if (journal->j_rtc_transaction) {
+		unsigned long readyToCommit = atomic_read(&journal->
+			j_rtc_transaction->t_outstanding_credits);
+
+		/* Transaction + control blocks */
+		free -= readyToCommit + (readyToCommit >> JBD2_CONTROL_BLOCKS_SHIFT);
+  
 	}
 	return free;
 }
