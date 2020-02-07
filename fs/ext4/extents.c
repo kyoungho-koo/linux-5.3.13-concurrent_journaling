@@ -4912,6 +4912,7 @@ out:
 int ext4_convert_unwritten_extents(handle_t *handle, struct inode *inode,
 				   loff_t offset, ssize_t len)
 {
+    printk("ext4_convert_unwritten_extents");
 	unsigned int max_blocks;
 	int ret = 0;
 	int ret2 = 0;

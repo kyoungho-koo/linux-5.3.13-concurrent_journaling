@@ -128,6 +128,7 @@ void __jbd2_log_wait_for_space(journal_t *journal)
 		 */
 		write_lock(&journal->j_state_lock);
 		if (journal->j_flags & JBD2_ABORT) {
+		    printk("__jbd2_log_wait_for_space() : JBD2_ABORT");
 			mutex_unlock(&journal->j_checkpoint_mutex);
 			return;
 		}
@@ -142,16 +143,19 @@ void __jbd2_log_wait_for_space(journal_t *journal)
 			spin_unlock(&journal->j_list_lock);
 			write_unlock(&journal->j_state_lock);
 			if (chkpt) {
+			    printk("__jbd2_log_wait_for_space() : jbd2_log_do_checkpoint");
 				jbd2_log_do_checkpoint(journal);
 			} else if (jbd2_cleanup_journal_tail(journal) == 0) {
 				/* We were able to recover space; yay! */
 				;
+			    printk("__jbd2_log_wait_for_space() : jbd2_cleanup_journal_tail");
 			} else if (tid) {
 				/*
 				 * jbd2_journal_commit_transaction() may want
 				 * to take the checkpoint_mutex if JBD2_FLUSHED
 				 * is set.  So we need to temporarily drop it.
 				 */
+			    printk("__jbd2_log_wait_for_space() : journal->committting_transaction");
 				mutex_unlock(&journal->j_checkpoint_mutex);
 				jbd2_log_wait_commit(journal, tid);
 				write_lock(&journal->j_state_lock);
@@ -277,6 +281,7 @@ restart:
 
 			if (batch_count)
 				__flush_batch(journal, &batch_count);
+			printk("jbd2_log_do_checkpoint() : jbd2_log_start_commit");
 			jbd2_log_start_commit(journal, tid);
 			/*
 			 * jbd2_journal_commit_transaction() may want

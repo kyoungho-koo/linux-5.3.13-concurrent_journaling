@@ -1139,6 +1139,7 @@ static journal_t *journal_init_common(struct block_device *bdev,
 	journal->j_max_batch_time = 15000; /* 15ms */
 	atomic_set(&journal->j_reserved_credits, 0);
 
+    printk("journal_init_common: JBD2_ABORT");
 	/* The journal is marked for error until we succeed with recovery! */
 	journal->j_flags = JBD2_ABORT;
 

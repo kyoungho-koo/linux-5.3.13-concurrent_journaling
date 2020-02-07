@@ -674,6 +674,8 @@ struct transaction_s
 	 */
 	struct transaction_chp_stats_s t_chp_stats;
 
+	atomic_t      t_wait_thread_count;
+	atomic_t      t_wait_thread_locked;
 	/*
 	 * Number of outstanding updates running on this transaction
 	 * [none]
@@ -1586,7 +1588,7 @@ static inline unsigned long jbd2_log_space_left(journal_t *journal)
 	/* Allow for rounding errors */
 	unsigned long free = journal->j_free - 32;
 
-	if (journal->j_committing_transaction) {
+	if (journal->j_committing_transaction && journal->j_committing_transaction->t_state != T_RUNNING) {
 		unsigned long committing = atomic_read(&journal->
 			j_committing_transaction->t_outstanding_credits);
 

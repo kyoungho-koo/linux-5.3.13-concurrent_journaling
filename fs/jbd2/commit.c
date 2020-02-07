@@ -346,6 +346,16 @@ static void jbd2_block_tag_csum_set(journal_t *j, journal_block_tag_t *tag,
 	else
 		tag->t_checksum = cpu_to_be16(csum32);
 }
+
+static inline int 
+atomic_cmpxchg_tx(journal_t *journal, atomic_t x) {
+    if ( atomic_read(&x) == 0 ){
+	    journal->j_running_transaction = NULL;
+		return 0;
+	}
+	return 1;
+
+}
 /*
  * jbd2_journal_commit_transaction
  *
@@ -382,6 +392,15 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	int csum_size = 0;
 	LIST_HEAD(io_bufs);
 	LIST_HEAD(log_bufs);
+	
+
+	int blocks = 0;
+	int locked = 0;
+	int ctx_change_count = 0;
+	int ctx_change_locked_count = 0;
+	ktime_t delay_time = 0;
+	ktime_t locked_time = 0;
+	ktime_t limit_time = journal->j_average_commit_time;
 
 	if (jbd2_journal_has_csum_v2or3(journal))
 		csum_size = sizeof(struct jbd2_journal_block_tail);
@@ -420,8 +439,9 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 			commit_transaction->t_tid);
 
 	write_lock(&journal->j_state_lock);
+	journal->j_committing_transaction = commit_transaction;
+	start_time = ktime_get();
 	J_ASSERT(commit_transaction->t_state == T_RUNNING);
-	commit_transaction->t_state = T_LOCKED;
 
 	trace_jbd2_commit_locking(journal, commit_transaction);
 	stats.run.rs_wait = commit_transaction->t_max_wait;
@@ -440,17 +460,45 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 
 		prepare_to_wait(&journal->j_wait_updates, &wait,
 					TASK_UNINTERRUPTIBLE);
+
 		if (atomic_read(&commit_transaction->t_updates)) {
-			spin_unlock(&commit_transaction->t_handle_lock);
-			write_unlock(&journal->j_state_lock);
-			schedule();
-			write_lock(&journal->j_state_lock);
-			spin_lock(&commit_transaction->t_handle_lock);
+		    spin_unlock(&commit_transaction->t_handle_lock);
+		    write_unlock(&journal->j_state_lock);
+		    schedule();
+		    write_lock(&journal->j_state_lock);
+		    spin_lock(&commit_transaction->t_handle_lock);
+			ctx_change_count ++;
+			if(locked) {
+			    ctx_change_locked_count ++;
+			}
+	        delay_time = ktime_to_ns(ktime_sub(ktime_get(), start_time));
+		    if (delay_time > limit_time ) {
+   	            if (commit_transaction->t_state == T_RUNNING){
+	                commit_transaction->t_state = T_LOCKED;
+					locked_time = delay_time;
+					locked = 1;
+//	                if (journal->j_dev->bd_dev != 8388609) {
+//	                    printk("jbd2_journal_commit_transaction : T_LOCKED : 1 t_updates %d"
+//					            , atomic_read(&commit_transaction->t_updates));
+//	                }
+
+	            }
+		    }
+//	        if (journal->j_dev->bd_dev != 8388609) {
+//		        printk ("delay_time: %lu , limit_time : %lu",delay_time, limit_time );
+//		    }
+
 		}
 		finish_wait(&journal->j_wait_updates, &wait);
 	}
-	spin_unlock(&commit_transaction->t_handle_lock);
+
+//    if (journal->j_dev->bd_dev != 8388609) {
+//       printk("jbd2_journal_commit_transaction : T_SWITCH ");
+//   }
 	commit_transaction->t_state = T_SWITCH;
+	journal->j_running_transaction = NULL;
+
+	spin_unlock(&commit_transaction->t_handle_lock);
 	write_unlock(&journal->j_state_lock);
 
 	J_ASSERT (atomic_read(&commit_transaction->t_outstanding_credits) <=
@@ -475,6 +523,8 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	while (commit_transaction->t_reserved_list) {
 		jh = commit_transaction->t_reserved_list;
 		JBUFFER_TRACE(jh, "reserved, unused: refile");
+		printk( "reserved, unused: refile");
+		
 		/*
 		 * A jbd2_journal_get_undo_access()+jbd2_journal_release_buffer() may
 		 * leave undo-committed data.
@@ -525,13 +575,16 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 					     stats.run.rs_flushing);
 
 	commit_transaction->t_state = T_FLUSH;
-	journal->j_committing_transaction = commit_transaction;
-	journal->j_running_transaction = NULL;
+//	journal->j_committing_transaction = commit_transaction;
+//	if (journal->j_dev->bd_dev != 8388609) {
+//	  printk("jbd2_journal_commit_transaction : FLUSH ");
+//	}
 	start_time = ktime_get();
 	commit_transaction->t_log_start = journal->j_head;
 	wake_up(&journal->j_wait_transaction_locked);
 	write_unlock(&journal->j_state_lock);
 
+	blocks = commit_transaction ->t_nr_buffers;
 	jbd_debug(3, "JBD2: commit phase 2a\n");
 
 	/*
@@ -566,6 +619,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 
 	J_ASSERT(commit_transaction->t_nr_buffers <=
 		 atomic_read(&commit_transaction->t_outstanding_credits));
+
 
 	err = 0;
 	bufs = 0;
@@ -1098,9 +1152,9 @@ restart_loop:
 	 * weight the commit time higher than the average time so we don't
 	 * react too strongly to vast changes in the commit time
 	 */
-	if (likely(journal->j_average_commit_time))
+	if (likely(limit_time))
 		journal->j_average_commit_time = (commit_time +
-				journal->j_average_commit_time*3) / 4;
+				limit_time*3) / 4;
 	else
 		journal->j_average_commit_time = commit_time;
 
@@ -1116,6 +1170,9 @@ restart_loop:
 	write_lock(&journal->j_state_lock);
 	spin_lock(&journal->j_list_lock);
 	commit_transaction->t_state = T_FINISHED;
+//	if (journal->j_dev->bd_dev != 8388609) {
+//	  printk("jbd2_journal_commit_transaction : FINISHED dev:%d",journal->j_dev->bd_dev);
+//	}
 	/* Check if the transaction can be dropped now that we are finished */
 	if (commit_transaction->t_checkpoint_list == NULL &&
 	    commit_transaction->t_checkpoint_io_list == NULL) {
@@ -1142,4 +1199,16 @@ restart_loop:
 	journal->j_stats.run.rs_blocks += stats.run.rs_blocks;
 	journal->j_stats.run.rs_blocks_logged += stats.run.rs_blocks_logged;
 	spin_unlock(&journal->j_history_lock);
+	
+	/*
+	if (journal->j_dev->bd_dev != 8388609) {
+		printk("{\"dev\":%d,\"handle\":%d,\"tid\":%d,\"pid\":%d,\"delay_time\":%lu,\"limit_time\":%lu,\"locked_time\":%lu,"
+		       "\"blocks\":%d,\"locked\":%d,\"nr_wait_thd\":%d,\"nr_locked_thd\":%d,\"ctx_chg\":%d,\"ctx_chg_locked\":%d,"
+			   "\"commit_time\":%lu, \"average_commit_time\":%lu}",
+			   journal->j_dev->bd_dev, atomic_read(&commit_transaction->t_handle_count), commit_transaction->t_tid, current->pid, delay_time, limit_time, delay_time - locked_time, 
+			   blocks, locked, atomic_read(&commit_transaction->t_wait_thread_count), atomic_read(&commit_transaction->t_wait_thread_locked),ctx_change_count, ctx_change_locked_count,
+			   commit_time, journal->j_average_commit_time);
+	}
+	*/
 }
+
