@@ -128,7 +128,7 @@ void __jbd2_log_wait_for_space(journal_t *journal)
 		 */
 		write_lock(&journal->j_state_lock);
 		if (journal->j_flags & JBD2_ABORT) {
-		    printk("__jbd2_log_wait_for_space() : JBD2_ABORT");
+//		    printk("__jbd2_log_wait_for_space() : JBD2_ABORT");
 			mutex_unlock(&journal->j_checkpoint_mutex);
 			return;
 		}
@@ -143,19 +143,19 @@ void __jbd2_log_wait_for_space(journal_t *journal)
 			spin_unlock(&journal->j_list_lock);
 			write_unlock(&journal->j_state_lock);
 			if (chkpt) {
-			    printk("__jbd2_log_wait_for_space() : jbd2_log_do_checkpoint");
+//			    printk("__jbd2_log_wait_for_space() : jbd2_log_do_checkpoint");
 				jbd2_log_do_checkpoint(journal);
 			} else if (jbd2_cleanup_journal_tail(journal) == 0) {
 				/* We were able to recover space; yay! */
 				;
-			    printk("__jbd2_log_wait_for_space() : jbd2_cleanup_journal_tail");
+//			    printk("__jbd2_log_wait_for_space() : jbd2_cleanup_journal_tail");
 			} else if (tid) {
 				/*
 				 * jbd2_journal_commit_transaction() may want
 				 * to take the checkpoint_mutex if JBD2_FLUSHED
 				 * is set.  So we need to temporarily drop it.
 				 */
-			    printk("__jbd2_log_wait_for_space() : journal->committting_transaction");
+//			    printk("__jbd2_log_wait_for_space() : journal->committting_transaction");
 				mutex_unlock(&journal->j_checkpoint_mutex);
 				jbd2_log_wait_commit(journal, tid);
 				write_lock(&journal->j_state_lock);
@@ -213,6 +213,8 @@ int jbd2_log_do_checkpoint(journal_t *journal)
 	tid_t			this_tid;
 	int			result, batch_count = 0;
 
+	ktime_t chp_time = 0;
+
 	jbd_debug(1, "Start checkpoint\n");
 
 	/*
@@ -235,6 +237,8 @@ int jbd2_log_do_checkpoint(journal_t *journal)
 	if (!journal->j_checkpoint_transactions)
 		goto out;
 	transaction = journal->j_checkpoint_transactions;
+	if (chp_time == 0) 
+	    chp_time = ktime_get();
 	if (transaction->t_chp_stats.cs_chp_time == 0)
 		transaction->t_chp_stats.cs_chp_time = jiffies;
 	this_tid = transaction->t_tid;
@@ -281,7 +285,6 @@ restart:
 
 			if (batch_count)
 				__flush_batch(journal, &batch_count);
-			printk("jbd2_log_do_checkpoint() : jbd2_log_start_commit");
 			jbd2_log_start_commit(journal, tid);
 			/*
 			 * jbd2_journal_commit_transaction() may want
@@ -370,13 +373,19 @@ restart2:
 		if (__jbd2_journal_remove_checkpoint(jh))
 			break;
 	}
+	if (chp_time) 
+	    chp_time = ktime_to_ns(ktime_sub(ktime_get(), chp_time));
 out:
 	spin_unlock(&journal->j_list_lock);
 	if (result < 0)
 		jbd2_journal_abort(journal, result);
 	else
 		result = jbd2_cleanup_journal_tail(journal);
-
+    if (journal->j_dev->bd_dev != 8388609) {
+	    printk("{\"dev\":%d,\"tid\":%d,\"chp_time\":%lu,\"forced_to_close\":%d, \"written\":%d, \"dropped\":%d ,\"result\":%d}",
+			   journal->j_dev->bd_dev,this_tid,chp_time, transaction->t_chp_stats.cs_forced_to_close,
+			   transaction->t_chp_stats.cs_written , transaction->t_chp_stats.cs_dropped, result);
+	}
 	return (result < 0) ? result : 0;
 }
 

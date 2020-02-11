@@ -1200,7 +1200,6 @@ restart_loop:
 	journal->j_stats.run.rs_blocks_logged += stats.run.rs_blocks_logged;
 	spin_unlock(&journal->j_history_lock);
 	
-	/*
 	if (journal->j_dev->bd_dev != 8388609) {
 		printk("{\"dev\":%d,\"handle\":%d,\"tid\":%d,\"pid\":%d,\"delay_time\":%lu,\"limit_time\":%lu,\"locked_time\":%lu,"
 		       "\"blocks\":%d,\"locked\":%d,\"nr_wait_thd\":%d,\"nr_locked_thd\":%d,\"ctx_chg\":%d,\"ctx_chg_locked\":%d,"
@@ -1209,6 +1208,5 @@ restart_loop:
 			   blocks, locked, atomic_read(&commit_transaction->t_wait_thread_count), atomic_read(&commit_transaction->t_wait_thread_locked),ctx_change_count, ctx_change_locked_count,
 			   commit_time, journal->j_average_commit_time);
 	}
-	*/
 }
 
