@@ -398,9 +398,11 @@ repeat:
 		 * won't wait for any handles anymore.
 		 */
 		if (transaction->t_state == T_SWITCH) {
+		 /*
 		    if (journal->j_dev->bd_dev != 8388609) {
 		        printk("start_this_handle: wait transaction switching ");
 	        }
+			*/
 	        atomic_inc(&transaction->t_wait_thread_count);
 			wait_transaction_switching(journal);
 			goto repeat;

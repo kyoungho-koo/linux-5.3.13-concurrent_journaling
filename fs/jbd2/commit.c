@@ -471,7 +471,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 			if(locked) {
 			    ctx_change_locked_count ++;
 			}
-	        delay_time = ktime_to_ns(ktime_sub(ktime_get(), start_time));
+	        delay_time = ktime_get();
 		    if (delay_time > limit_time ) {
    	            if (commit_transaction->t_state == T_RUNNING){
 	                commit_transaction->t_state = T_LOCKED;
@@ -497,6 +497,14 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 //   }
 	commit_transaction->t_state = T_SWITCH;
 	journal->j_running_transaction = NULL;
+	ktime_t switch_time = ktime_get();
+	if (delay_time) {
+	    delay_time = ktime_to_ns(ktime_sub(switch_time, delay_time));
+	}
+	
+	if (locked_time) {
+	    locked_time = ktime_to_ns(ktime_sub(switch_time, locked_time));
+	}
 
 	spin_unlock(&commit_transaction->t_handle_lock);
 	write_unlock(&journal->j_state_lock);
@@ -575,6 +583,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 					     stats.run.rs_flushing);
 
 	commit_transaction->t_state = T_FLUSH;
+	switch_time = ktime_to_ns(ktime_sub(ktime_get(),switch_time));
 //	journal->j_committing_transaction = commit_transaction;
 //	if (journal->j_dev->bd_dev != 8388609) {
 //	  printk("jbd2_journal_commit_transaction : FLUSH ");
@@ -1200,13 +1209,14 @@ restart_loop:
 	journal->j_stats.run.rs_blocks_logged += stats.run.rs_blocks_logged;
 	spin_unlock(&journal->j_history_lock);
 	
-	if (journal->j_dev->bd_dev != 8388609) {
+	/*if (journal->j_dev->bd_dev != 8388609) {
 		printk("{\"dev\":%d,\"handle\":%d,\"tid\":%d,\"pid\":%d,\"delay_time\":%lu,\"limit_time\":%lu,\"locked_time\":%lu,"
 		       "\"blocks\":%d,\"locked\":%d,\"nr_wait_thd\":%d,\"nr_locked_thd\":%d,\"ctx_chg\":%d,\"ctx_chg_locked\":%d,"
-			   "\"commit_time\":%lu, \"average_commit_time\":%lu}",
+			   "\"commit_time\":%lu, \"average_commit_time\":%lu,\"switch_time\":%lu}",
 			   journal->j_dev->bd_dev, atomic_read(&commit_transaction->t_handle_count), commit_transaction->t_tid, current->pid, delay_time, limit_time, delay_time - locked_time, 
 			   blocks, locked, atomic_read(&commit_transaction->t_wait_thread_count), atomic_read(&commit_transaction->t_wait_thread_locked),ctx_change_count, ctx_change_locked_count,
-			   commit_time, journal->j_average_commit_time);
+			   commit_time, journal->j_average_commit_time,switch_time);
 	}
+	*/
 }
 

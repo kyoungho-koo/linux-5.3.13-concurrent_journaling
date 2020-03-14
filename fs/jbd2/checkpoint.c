@@ -381,11 +381,12 @@ out:
 		jbd2_journal_abort(journal, result);
 	else
 		result = jbd2_cleanup_journal_tail(journal);
-    if (journal->j_dev->bd_dev != 8388609) {
+    /*if (journal->j_dev->bd_dev != 8388609) {
 	    printk("{\"dev\":%d,\"tid\":%d,\"chp_time\":%lu,\"forced_to_close\":%d, \"written\":%d, \"dropped\":%d ,\"result\":%d}",
 			   journal->j_dev->bd_dev,this_tid,chp_time, transaction->t_chp_stats.cs_forced_to_close,
 			   transaction->t_chp_stats.cs_written , transaction->t_chp_stats.cs_dropped, result);
 	}
+	*/
 	return (result < 0) ? result : 0;
 }
 
